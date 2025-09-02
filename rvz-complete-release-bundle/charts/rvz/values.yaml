@@ -1,0 +1,14 @@
+replicaCount: 2
+image:
+  repositoryBackend: docker.io/youruser/rvz-backend
+  repositoryFrontend: docker.io/youruser/rvz-frontend
+  tag: latest
+service:
+  type: ClusterIP
+ingress:
+  enabled: true
+  host: rvz.example.com
+secrets:
+  jwtSecret: "change-me"
+  smtpUser: "you@example.com"
+  smtpPass: "changeme"
