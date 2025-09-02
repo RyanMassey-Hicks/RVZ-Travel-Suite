@@ -1,0 +1,122 @@
+name: RVZ Travel Suite Full Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    env:
+      APP_NAME: "RVZ Travel Suite"
+      APP_ID: "co.rvzgroup.travel"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # -----------------------
+      # Backend Setup & Tests
+      # -----------------------
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: |
+          cd backend
+          pytest tests/
+
+      # -----------------------
+      # Frontend Build
+      # -----------------------
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm install
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm run build
+
+      # -----------------------
+      # Desktop Packaging
+      # -----------------------
+      - name: Install desktop dependencies
+        run: |
+          cd desktop
+          npm install
+
+      - name: Package Desktop App
+        run: |
+          cd desktop
+          npm run build
+          npm run package  # Produces .exe for Windows and .dmg for Mac
+
+      # -----------------------
+      # Code Signing (Optional)
+      # -----------------------
+      - name: Sign Windows Installer (.exe)
+        if: runner.os == 'Windows'
+        run: |
+          echo "Signing step placeholder - add your .pfx certificate and password here"
+
+      - name: Sign Mac Installer (.dmg/.app)
+        if: runner.os == 'macOS'
+        run: |
+          echo "Signing step placeholder - add your Apple Developer credentials here"
+
+      # -----------------------
+      # Generate Release Notes
+      # -----------------------
+      - name: Extract Release Notes from CHANGELOG.md
+        id: changelog
+        run: |
+          NEW_TAG=${GITHUB_REF##*/}
+          awk "/^## \[$NEW_TAG\]/,/^## \[/" CHANGELOG.md | sed '$d' > RELEASE_NOTES.md || echo "No notes found"
+
+      # -----------------------
+      # SHA256 Checksums
+      # -----------------------
+      - name: Generate SHA256 checksums
+        run: |
+          cd desktop/dist
+          sha256sum *.exe *.dmg > checksums.txt
+
+      # -----------------------
+      # Create GitHub Release
+      # -----------------------
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Release ${{ github.ref_name }}"
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # -----------------------
+      # Upload Release Artifacts
+      # -----------------------
+      - name: Upload installers and checksums
+        uses: softprops/action-gh-release@v1
+        with:
+          files: desktop/dist/*.exe
+          files: desktop/dist/*.dmg
+          files: desktop/dist/checksums.txt
