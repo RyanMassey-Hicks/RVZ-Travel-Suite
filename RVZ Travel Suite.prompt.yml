@@ -1,0 +1,153 @@
+messages:
+  - role: system
+    content: generate an application
+  - role: user
+    content: |
+      name: Full Application Release
+
+      on:
+        push:
+          tags:
+            - "v*.*.*"
+
+      permissions:
+        contents: write
+
+      jobs:
+        build:
+          runs-on: ubuntu-latest
+
+          strategy:
+            matrix:
+              node-version: [20]
+              python-version: [3.11]
+
+          steps:
+            # Checkout repo
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            # Setup Node for frontend
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                node-version: ${{ matrix.node-version }}
+                cache: npm
+
+            # Setup Python for backend
+            - name: Setup Python
+              uses: actions/setup-python@v5
+              with:
+                python-version: ${{ matrix.python-version }}
+
+            # Install backend dependencies
+            - name: Install backend deps
+              run: |
+                cd backend
+                pip install -r requirements.txt
+
+            # Install frontend dependencies
+            - name: Install frontend deps
+              run: |
+                cd frontend
+                npm ci
+
+            # Build frontend
+            - name: Build frontend
+              run: |
+                cd frontend
+                npm run build
+                cp -r dist ../backend/static
+
+            # Test backend
+            - name: Run backend tests
+              run: |
+                cd backend
+                pytest --maxfail=1 --disable-warnings -q
+
+            # Package backend into executable
+            - name: Package backend
+              run: |
+                cd backend
+                pip install pyinstaller
+                pyinstaller --onefile main.py --name rvz-backend
+                mkdir -p ../dist/backend
+                cp dist/rvz-backend ../dist/backend/
+
+            # Desktop packager (Electron)
+            - name: Build desktop app
+              run: |
+                cd desktop
+                npm ci
+                npm run build
+                npm run package
+                mkdir -p ../dist/desktop
+                cp -r out/* ../dist/desktop/
+
+            # Helm chart lint & package
+            - name: Lint Helm charts
+              run: |
+                helm lint helm/
+
+            - name: Package Helm charts
+              run: |
+                helm package helm/ -d dist/helm
+
+            # Collect all outputs
+            - name: Bundle all artifacts
+              run: |
+                mkdir -p release-bundle
+                cp -r backend dist/frontend dist/backend dist/desktop dist/helm release-bundle/
+                tar -czf release-bundle.tar.gz release-bundle
+
+            # Upload build artifacts
+            - name: Upload artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                name: release-bundle
+                path: release-bundle.tar.gz
+
+        release:
+          runs-on: ubuntu-latest
+          needs: build
+
+          steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Download artifacts
+              uses: actions/download-artifact@v4
+              with:
+                name: release-bundle
+                path: .
+
+            - name: Extract bundle
+              run: tar -xzf release-bundle.tar.gz
+
+            - name: Generate checksums
+              run: |
+                shasum -a 256 release-bundle.tar.gz > checksums.txt
+
+            - name: Generate Release Notes
+              id: notes
+              run: |
+                if [ -f CHANGELOG.md ]; then
+                  echo "notes<<EOF" >> $GITHUB_OUTPUT
+                  awk '/^## / {print; exit} {print}' CHANGELOG.md >> $GITHUB_OUTPUT
+                  echo "EOF" >> $GITHUB_OUTPUT
+                else
+                  echo "notes=Automated release of $GITHUB_REF_NAME" >> $GITHUB_OUTPUT
+                fi
+
+            - name: Create GitHub Release
+              uses: softprops/action-gh-release@v2
+              with:
+                tag_name: ${{ github.ref_name }}
+                name: "Release ${{ github.ref_name }}"
+                body: ${{ steps.notes.outputs.notes }}
+                files: |
+                  release-bundle.tar.gz
+                  checksums.txt
+              env:
+                GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+model: openai/gpt-4o
